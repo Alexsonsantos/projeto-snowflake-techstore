@@ -1,0 +1,51 @@
+USE ROLE ACCOUNTADMIN;
+
+-- Criando um Resource Monitor com limite de 100 créditos por mês
+CREATE OR REPLACE RESOURCE MONITOR RM_TECHSTORE
+    WITH CREDIT_QUOTA = 100               -- Limite mensal de créditos
+    FREQUENCY = MONTHLY                   -- Reinicia todo dia 1º do mês
+    START_TIMESTAMP = IMMEDIATELY
+    NOTIFY_USERS = (CURRENT_USER())       -- Usuários que receberão email
+    TRIGGERS 
+        ON 75 PERCENT DO NOTIFY           -- Alerta por email ao atingir 75%
+        ON 90 PERCENT DO NOTIFY           -- Alerta por email ao atingir 90%
+        ON 100 PERCENT DO SUSPEND         -- Impede novas queries ao atingir 100%
+        ON 110 PERCENT DO SUSPEND_IMMEDIATE; -- Cancela queries rodando no momento ao atingir 110%
+
+-- Associando o monitor ao Virtual Warehouse da TechStore
+ALTER WAREHOUSE TECHSTORE_WH SET RESOURCE_MONITOR = RM_TECHSTORE;
+
+-- Verificando o status dos Resource Monitors ativos
+SHOW RESOURCE MONITORS;
+
+
+
+USE ROLE SYSADMIN;
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- Definindo a coluna DATA_VENDA como chave de clusterização da tabela de Vendas
+ALTER TABLE VENDAS CLUSTER BY (DATE(DATA_VENDA));
+
+-- Verificando o status do clustering na tabela
+SELECT SYSTEM$CLUSTERING_INFORMATION('VENDAS');
+
+
+
+-- Buscando as 5 queries mais demoradas nos últimos dias
+SELECT 
+    QUERY_ID,
+    QUERY_TEXT,
+    USER_NAME,
+    EXECUTION_TIME / 1000 AS SEGUNDOS_EXECUCAO,
+    BYTES_SCANNED / (1024*1024) AS MB_LIDOS
+FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY())
+WHERE EXECUTION_TIME > 0
+ORDER BY EXECUTION_TIME DESC
+LIMIT 5;
+
+
+-- Analisando o Partition Pruning
+SELECT * 
+FROM VENDAS 
+WHERE DATE(DATA_VENDA) = CURRENT_DATE();

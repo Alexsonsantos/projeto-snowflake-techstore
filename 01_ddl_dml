@@ -1,0 +1,159 @@
+-- =============================================================
+-- Camada DDL
+-- =============================================================
+
+-- Criação e configuração do Virtual Warehouse (Computação)
+CREATE OR REPLACE WAREHOUSE TECHSTORE_WH
+    WITH WAREHOUSE_SIZE = 'XSMALL'
+    AUTO_SUSPEND = 60
+    AUTO_RESUME = TRUE
+    INITIALLY_SUSPENDED = TRUE
+    COMMENT = 'Warehouse para cargas e analises da TechStore';
+
+USE WAREHOUSE TECHSTORE_WH;
+
+-- Criação do Banco de Dados e Schema
+CREATE OR REPLACE DATABASE TECHSTORE_DB;
+USE DATABASE TECHSTORE_DB;
+
+CREATE OR REPLACE SCHEMA VENDAS;
+USE SCHEMA TECHSTORE_DB.VENDAS;
+
+-- Criação da Tabela de Clientes (com campo VARIANT para dados JSON)
+CREATE OR REPLACE TABLE CLIENTES (
+    CLIENTE_ID INT AUTOINCREMENT START 1 INCREMENT 1 PRIMARY KEY,
+    NOME VARCHAR(100) NOT NULL,
+    EMAIL VARCHAR(150) UNIQUE,
+    ESTADO VARCHAR(2),
+    METADADOS VARIANT, -- Grava atributos flexiveis no formato JSON
+    DATA_CADASTRO TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Criação da Tabela de Produtos
+CREATE OR REPLACE TABLE PRODUTOS (
+    PRODUTO_ID INT PRIMARY KEY,
+    NOME_PRODUTO VARCHAR(100) NOT NULL,
+    CATEGORIA VARCHAR(50),
+    PRECO NUMBER(10,2) NOT NULL,
+    ESTOQUE INT DEFAULT 0
+);
+
+-- Criação da Tabela de Vendas
+CREATE OR REPLACE TABLE VENDAS (
+    VENDA_ID INT AUTOINCREMENT PRIMARY KEY,
+    CLIENTE_ID INT REFERENCES CLIENTES(CLIENTE_ID),
+    DATA_VENDA TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    VALOR_TOTAL NUMBER(10,2),
+    STATUS VARCHAR(20) DEFAULT 'CONCLUIDA'
+);
+
+-- Criação da Tabela de Itens da Venda
+CREATE OR REPLACE TABLE ITENS_VENDA (
+    ITEM_ID INT AUTOINCREMENT PRIMARY KEY,
+    VENDA_ID INT REFERENCES VENDAS(VENDA_ID),
+    PRODUTO_ID INT REFERENCES PRODUTOS(PRODUTO_ID),
+    QUANTIDADE INT NOT NULL,
+    PRECO_UNITARIO NUMBER(10,2) NOT NULL
+);
+
+
+
+-- =============================================================
+-- Camada DML
+-- =============================================================
+-- INSERT: Carga Inicial de Dados
+-- =============================================================
+
+-- Inserindo Clientes com metadados em formato JSON
+INSERT INTO CLIENTES (NOME, EMAIL, ESTADO, METADADOS) VALUES 
+('Ana Silva', 'ana.silva@email.com', 'SP', '{"canal_origem": "Google", "categoria_fav": "Tech"}'::VARIANT),
+('Carlos Souza', 'carlos.souza@email.com', 'RJ', '{"canal_origem": "Instagram", "categoria_fav": "Games"}'::VARIANT),
+('Mariana Lima', 'mariana.lima@email.com', 'MG', '{"canal_origem": "Indicacao", "categoria_fav": "Audio"}'::VARIANT);
+
+-- Inserindo Produtos
+INSERT INTO PRODUTOS (PRODUTO_ID, NOME_PRODUTO, CATEGORIA, PRECO, ESTOQUE) VALUES
+(101, 'Mouse Sem Fio Ergonomico', 'Acessórios', 120.00, 50),
+(102, 'Teclado Mecanico RGB', 'Acessórios', 350.00, 30),
+(103, 'Monitor 27 144Hz', 'Monitores', 1200.00, 15),
+(104, 'Headset Gamer 7.1', 'Áudio', 250.00, 20);
+
+-- Registrando Vendas
+INSERT INTO VENDAS (CLIENTE_ID, VALOR_TOTAL) VALUES 
+(1, 470.00),
+(2, 1200.00);
+
+-- Registrando Itens das Vendas
+INSERT INTO ITENS_VENDA (VENDA_ID, PRODUTO_ID, QUANTIDADE, PRECO_UNITARIO) VALUES
+(1, 101, 1, 120.00),
+(1, 102, 1, 350.00),
+(2, 103, 1, 1200.00);
+
+
+-- UPDATE: Atualização de Valores e Estoque
+
+-- Aplicando 10% de desconto no Monitor 27
+UPDATE PRODUTOS 
+SET PRECO = PRECO * 0.90 
+WHERE PRODUTO_ID = 103;
+
+-- Dar baixa de 1 unidade do estoque do Mouse
+UPDATE PRODUTOS 
+SET ESTOQUE = ESTOQUE - 1 
+WHERE PRODUTO_ID = 101;
+
+
+-- MERGE INTO: Carga Incremental / Upsert
+
+-- Criando uma tabela staging temporária para simular chegada de novos dados
+CREATE OR REPLACE TEMP TABLE STG_PRODUTOS (
+    PRODUTO_ID INT,
+    NOME_PRODUTO VARCHAR(100),
+    CATEGORIA VARCHAR(50),
+    PRECO NUMBER(10,2),
+    ESTOQUE INT
+);
+
+INSERT INTO STG_PRODUTOS VALUES
+(102, 'Teclado Mecanico RGB v2', 'Acessórios', 380.00, 40), -- Atualiza ID 102
+(105, 'Webcam Full HD 1080p', 'Vídeo', 190.00, 25);            -- Insere novo ID 105
+
+-- Executando a operação de MERGE
+MERGE INTO PRODUTOS p
+USING STG_PRODUTOS s
+ON p.PRODUTO_ID = s.PRODUTO_ID
+WHEN MATCHED THEN
+    UPDATE SET 
+        p.NOME_PRODUTO = s.NOME_PRODUTO,
+        p.PRECO = s.PRECO,
+        p.ESTOQUE = s.ESTOQUE
+WHEN NOT MATCHED THEN
+    INSERT (PRODUTO_ID, NOME_PRODUTO, CATEGORIA, PRECO, ESTOQUE)
+    VALUES (s.PRODUTO_ID, s.NOME_PRODUTO, s.CATEGORIA, s.PRECO, s.ESTOQUE);
+
+-- DELETE: Exclusão de Registros
+-- Remover registros de testes ou pedidos cancelados (exemplo)
+DELETE FROM VENDAS 
+WHERE STATUS = 'CANCELADA' OR VALOR_TOTAL <= 0;
+
+
+
+-- Relatório de Vendas JOIN simples
+SELECT 
+    c.NOME AS NOME_CLIENTE,
+    v.VENDA_ID,
+    v.DATA_VENDA,
+    v.VALOR_TOTAL
+FROM VENDAS v
+JOIN CLIENTES c ON v.CLIENTE_ID = c.CLIENTE_ID;
+
+-- Notação de ponto (:) e coerção de tipo (::STRING) para JSON no Snowflake
+SELECT 
+    NOME,
+    METADADOS:canal_origem::STRING AS CANAL_ORIGEM,
+    METADADOS:categoria_fav::STRING AS CATEGORIA_FAVORITA
+FROM CLIENTES;
+
+-- Verificação dos produtos atualizados/inseridos via MERGE
+SELECT * 
+FROM PRODUTOS 
+WHERE PRODUTO_ID IN (102, 105);

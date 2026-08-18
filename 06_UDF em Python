@@ -1,0 +1,76 @@
+USE ROLE ACCOUNTADMIN;
+USE WAREHOUSE TECHSTORE_WH;
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- Criando uma UDF escalar em Python
+CREATE OR REPLACE FUNCTION CLASSIFICAR_CLIENTE(VALOR_GASTO FLOAT)
+RETURNS STRING
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.8'
+HANDLER = 'classificar'
+AS
+$$
+def classificar(valor):
+    if valor is None:
+        return 'Sem Histórico'
+    elif valor >= 1000.0:
+        return 'VIP'
+    elif valor >= 300.0:
+        return 'Frequente'
+    else:
+        return 'Iniciante'
+$$;
+
+
+-- Testando
+SELECT 
+    CLIENTE_ID,
+    TOTAL_GASTO,
+    CLASSIFICAR_CLIENTE(TOTAL_GASTO) AS CATEGORIA_CLIENTE
+FROM REGISTRO_VENDAS_SUMARIO;
+
+
+
+
+-- ==============================================================
+-- Stored Procedure e Snowpark Python
+-- ==============================================================
+
+CREATE OR REPLACE PROCEDURE GERAR_ALERTA_ESTOQUE(LIMITE_ESTOQUE INT)
+RETURNS STRING
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.8'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'processar_estoque'
+AS
+$$
+from snowflake.snowpark.functions import col, lit
+
+def processar_estoque(session, limite_estoque):
+    # Carregando a tabela PRODUTOS em um DataFrame do Snowpark
+    df_produtos = session.table("PRODUTOS")
+    
+    # Filtrando produtos abaixo do limite informado no parâmetro
+    df_estoque_baixo = df_produtos.filter(col("ESTOQUE") < limite_estoque)
+    
+    # Adicionaando uma coluna de sugestão de compra (Estoque ideal = 50)
+    df_resultado = df_estoque_baixo.with_column(
+        "SUGESTAO_COMPRA", 
+        lit(50) - col("ESTOQUE")
+    )
+    
+    # Salvar o resultado em uma nova tabela (ou sobrescrever se já existir)
+    df_resultado.write.mode("overwrite").save_as_table("ALERTA_ESTOQUE_BAIXO")
+    
+    # Retornar mensagem de sucesso com a quantidade de registros processados
+    qtd = df_resultado.count()
+    return f"Sucesso! {qtd} produtos adicionados ao alerta de estoque baixo."
+$$;
+
+
+-- Invocando a Stored Procedure Python
+CALL GERAR_ALERTA_ESTOQUE(30);
+
+-- Consultando a tabela que foi gerada pelo Snowpark Python
+SELECT * FROM ALERTA_ESTOQUE_BAIXO;

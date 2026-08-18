@@ -1,0 +1,99 @@
+-- Criando as Roles
+USE ROLE USERADMIN;
+
+CREATE ROLE IF NOT EXISTS ROLE_ANALISTA_BI
+    COMMENT = 'Acesso de apenas leitura as tabelas de Vendas';
+
+CREATE ROLE IF NOT EXISTS ROLE_ENGENHEIRO_DADOS
+    COMMENT = 'Acesso de leitura e escrita para pipelines de dados';
+
+-- Estabelecendo a hierarquia
+GRANT ROLE ROLE_ANALISTA_BI TO ROLE ROLE_ENGENHEIRO_DADOS;
+GRANT ROLE ROLE_ENGENHEIRO_DADOS TO ROLE SYSADMIN;
+
+
+-- =============================================================
+-- Acessos de Computação e Objetos (SYSADMIN)
+-- =============================================================
+USE ROLE SYSADMIN;
+
+-- Permissões de infraestrutura
+GRANT USAGE ON WAREHOUSE TECHSTORE_WH TO ROLE ROLE_ANALISTA_BI;
+GRANT USAGE ON DATABASE TECHSTORE_DB TO ROLE ROLE_ANALISTA_BI;
+GRANT USAGE ON SCHEMA TECHSTORE_DB.VENDAS TO ROLE ROLE_ANALISTA_BI;
+
+-- Permissões de leitura (Analista)
+GRANT SELECT ON ALL TABLES IN SCHEMA TECHSTORE_DB.VENDAS TO ROLE ROLE_ANALISTA_BI;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA TECHSTORE_DB.VENDAS TO ROLE ROLE_ANALISTA_BI;
+
+-- Permissões de escrita (Engenheiro)
+GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA TECHSTORE_DB.VENDAS TO ROLE ROLE_ENGENHEIRO_DADOS;
+GRANT INSERT, UPDATE, DELETE ON FUTURE TABLES IN SCHEMA TECHSTORE_DB.VENDAS TO ROLE ROLE_ENGENHEIRO_DADOS;
+
+
+-- =============================================================
+-- Criando Usuários (USERADMIN)
+-- =============================================================
+USE ROLE USERADMIN;
+
+CREATE USER IF NOT EXISTS BRUNO_ANALISTA
+    PASSWORD = 'SenhaSegura123!'
+    DEFAULT_ROLE = ROLE_ANALISTA_BI
+    DEFAULT_WAREHOUSE = TECHSTORE_WH
+    MUST_CHANGE_PASSWORD = TRUE;
+
+CREATE USER IF NOT EXISTS CARLA_ENGENHEIRA
+    PASSWORD = 'SenhaSegura123!'
+    DEFAULT_ROLE = ROLE_ENGENHEIRO_DADOS
+    DEFAULT_WAREHOUSE = TECHSTORE_WH
+    MUST_CHANGE_PASSWORD = TRUE;
+
+GRANT ROLE ROLE_ANALISTA_BI TO USER BRUNO_ANALISTA;
+GRANT ROLE ROLE_ENGENHEIRO_DADOS TO USER CARLA_ENGENHEIRA;
+
+
+-- =============================================================
+-- Re-inserindo a Ana Silva (SYSADMIN / ACCOUNTADMIN)
+-- =============================================================
+USE ROLE ACCOUNTADMIN;
+
+-- Usa o INSERT SELECT para não dar o erro de função no VALUES
+INSERT INTO CLIENTES (CLIENTE_ID, NOME, EMAIL, ESTADO, METADADOS)
+SELECT 1, 'Ana Silva', 'ana.silva@email.com', 'SP', PARSE_JSON('{"canal_origem": "Google", "categoria_fav": "Tech"}');
+
+
+-- =============================================================
+-- Passo 4: Teste de Validação de Segurança
+-- =============================================================
+USE ROLE ROLE_ANALISTA_BI;
+USE WAREHOUSE TECHSTORE_WH;
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- Teste de Leitura: DEVE RETORNAR OS 3 CLIENTES
+SELECT * FROM CLIENTES;
+
+-- Teste de Escrita: DEVE DAR ERRO DE PERMISSÃO!
+DELETE FROM CLIENTES WHERE CLIENTE_ID = 1;
+
+
+-- Mudar a sessão para o perfil do Engenheiro
+USE ROLE ROLE_ENGENHEIRO_DADOS;
+USE WAREHOUSE TECHSTORE_WH;
+
+-- Teste de Leitura
+SELECT * FROM PRODUTOS;
+
+-- Teste de Escrita:
+UPDATE PRODUTOS SET ESTOQUE = ESTOQUE + 10 WHERE PRODUTO_ID = 101;
+
+-- garantindo a permissão de escrita trocando para a role de Engenheiro ou SYSADMIN
+USE ROLE ACCOUNTADMIN; 
+
+INSERT INTO CLIENTES (CLIENTE_ID, NOME, EMAIL, ESTADO, METADADOS)
+SELECT 1, 'Ana Silva', 'ana.silva@email.com', 'SP', PARSE_JSON('{"canal_origem": "Google", "categoria_fav": "Tech"}');
+
+USE ROLE ROLE_ANALISTA_BI;
+
+-- Isso TEM que dar erro de acesso negado:
+DELETE FROM CLIENTES WHERE CLIENTE_ID = 1;

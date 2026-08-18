@@ -1,0 +1,89 @@
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- Formato para arquivos CSV (delimitado por vírgula, pula cabeçalho)
+CREATE OR REPLACE FILE FORMAT FF_CSV_PADRAO
+    TYPE = 'CSV'
+    FIELD_DELIMITER = ','
+    SKIP_HEADER = 1
+    FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+    NULL_IF = ('NULL', 'null', '');
+
+-- Formato para arquivos JSON
+CREATE OR REPLACE FILE FORMAT FF_JSON_PADRAO
+    TYPE = 'JSON'
+    STRIP_OUTER_ARRAY = TRUE; 
+
+
+-- Criando um Stage Interno no Snowflake
+CREATE OR REPLACE STAGE MEU_STAGE_INTERNO
+    COMMENT = 'Stage interno para receber arquivos CSV e JSON';
+
+
+-- Tabela Vendedores
+CREATE OR REPLACE TABLE VENDEDORES (
+    VENDEDOR_ID INT,
+    NOME VARCHAR(100),
+    REGIAO VARCHAR(50),
+    COMISSAO NUMBER(5,2)
+);
+
+-- Comando COPY INTO para CSV
+COPY INTO VENDEDORES
+FROM @MEU_STAGE_INTERNO/vendedores.csv
+FILE_FORMAT = (FORMAT_NAME = 'FF_CSV_PADRAO')
+ON_ERROR = 'CONTINUE'; 
+
+-- Tabela Relacional de Destino
+CREATE OR REPLACE TABLE CATALOGO_PRODUTOS (
+    PRODUTO_ID INT,
+    NOME_PRODUTO VARCHAR(100),
+    PRECO NUMBER(10,2),
+    COR VARCHAR(30)
+);
+
+-- Comando COPY INTO com Transformação Direta de JSON
+[
+  {"id": 201, "produto": "Monitor Ultrawide", "preco": 2100.00, "detalhes": {"cor": "Preto"}},
+  {"id": 202, "produto": "Cadeira Ergonomica", "preco": 1350.50, "detalhes": {"cor": "Cinza"}}
+]
+
+
+COPY INTO CATALOGO_PRODUTOS
+FROM (
+    SELECT 
+        $1:id::INT,
+        $1:produto::STRING,
+        $1:preco::NUMBER(10,2),
+        $1:detalhes.cor::STRING
+    FROM @MEU_STAGE_INTERNO/produtos.json
+)
+FILE_FORMAT = (FORMAT_NAME = 'FF_JSON_PADRAO');
+
+
+
+
+
+-- Criando tabela de staging bruto com coluna VARIANT
+CREATE OR REPLACE TABLE STG_JSON_RAW (
+    DADOS_JSON VARIANT
+);
+
+-- Inserindo um JSON como se fosse um arquivo lido
+INSERT INTO STG_JSON_RAW
+SELECT PARSE_JSON('[
+  {"id": 301, "item": "Notebook Gamer", "valor": 5500.00},
+  {"id": 302, "item": "Dockstation USB-C", "valor": 450.00}
+]');
+
+-- Extraindo os dados parseados
+SELECT 
+    f.value:id::INT AS ID_PRODUTO,
+    f.value:item::STRING AS NOME_ITEM,
+    f.value:valor::NUMBER(10,2) AS PRECO
+FROM STG_JSON_RAW,
+LATERAL FLATTEN(input => DADOS_JSON) f;
+
+
+
+
