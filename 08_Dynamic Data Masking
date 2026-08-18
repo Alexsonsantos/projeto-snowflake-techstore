@@ -1,0 +1,84 @@
+USE ROLE ACCOUNTADMIN;
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- Criando a política de mascaramento para colunas do tipo String
+CREATE OR REPLACE MASKING POLICY MASK_EMAIL AS (VALOR STRING) 
+RETURNS STRING ->
+    CASE 
+        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN', 'SYSADMIN', 'ROLE_ENGENHEIRO_DADOS') THEN VALOR
+        ELSE REGEXP_REPLACE(VALOR, '(^.).*(@.*$)', '\\1***\\2') -- Mantem primeira letra e o dominio
+    END;
+
+-- Aplicar a política na coluna EMAIL da tabela CLIENTES
+ALTER TABLE CLIENTES MODIFY COLUMN EMAIL SET MASKING POLICY MASK_EMAIL;
+
+
+-- Testando o Mascaramento
+-- Como SYSADMIN (deve ver o e-mail completo)
+USE ROLE SYSADMIN;
+SELECT NOME, EMAIL FROM CLIENTES;
+
+-- Como Analista BI (deve ver o e-mail mascarado)
+USE ROLE ROLE_ANALISTA_BI;
+USE WAREHOUSE TECHSTORE_WH;
+SELECT NOME, EMAIL FROM CLIENTES;
+
+--===========================================================================
+-- Row Access Policy
+--===========================================================================
+USE ROLE ACCOUNTADMIN;
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- 1. Criar a politica de acesso baseada no estado do cliente
+CREATE OR REPLACE ROW ACCESS POLICY RAP_ESTADO_CLIENTE AS (ESTADO_COL STRING)
+RETURNS BOOLEAN ->
+    CASE 
+        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN', 'SYSADMIN', 'ROLE_ENGENHEIRO_DADOS') THEN TRUE
+        WHEN CURRENT_ROLE() = 'ROLE_ANALISTA_BI' AND ESTADO_COL = 'SP' THEN TRUE
+        ELSE FALSE
+    END;
+
+-- 2. Aplicar a política na coluna ESTADO da tabela CLIENTES
+ALTER TABLE CLIENTES ADD ROW ACCESS POLICY RAP_ESTADO_CLIENTE ON (ESTADO);
+
+
+
+
+-- Testando a Segurança por Linha
+-- Teste A: Como Analista BI (retornará apenas os registros do estado 'SP')
+USE ROLE ROLE_ANALISTA_BI;
+USE WAREHOUSE TECHSTORE_WH;
+SELECT * FROM CLIENTES;
+
+-- Teste B: Como SYSADMIN (retornará todos os registros de todos os estados)
+USE ROLE SYSADMIN;
+SELECT * FROM CLIENTES;
+
+
+
+--===========================================================================
+-- Limpeza das Políticas
+--===========================================================================
+USE ROLE ACCOUNTADMIN;
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- 1. Desvincular a política antiga que já está aplicada na tabela
+ALTER TABLE CLIENTES DROP ROW ACCESS POLICY RAP_ESTADO_CLIENTE;
+
+-- 2. Adicionar a política novamente
+ALTER TABLE CLIENTES ADD ROW ACCESS POLICY RAP_ESTADO_CLIENTE ON (ESTADO);
+
+
+-- Atualizando as regras da política já vinculada diretamente
+CREATE OR REPLACE ROW ACCESS POLICY RAP_ESTADO_CLIENTE AS (ESTADO_COL STRING)
+RETURNS BOOLEAN ->
+    CASE 
+        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN', 'SYSADMIN', 'ROLE_ENGENHEIRO_DADOS') THEN TRUE
+        WHEN CURRENT_ROLE() = 'ROLE_ANALISTA_BI' AND ESTADO_COL = 'SP' THEN TRUE
+        ELSE FALSE
+    END;
+
+    

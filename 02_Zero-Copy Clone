@@ -1,0 +1,108 @@
+-- =============================================================
+-- Camada Zero-Copy Clone
+-- =============================================================
+
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- Criando uma cópia completa do banco de produção para o ambiente de DEV
+CREATE OR REPLACE DATABASE TECHSTORE_DEV CLONE TECHSTORE_DB;
+
+-- Mudando para o novo banco cloned para verificar os dados
+USE DATABASE TECHSTORE_DEV;
+USE SCHEMA VENDAS;
+
+-- Validalidando se os dados estão visíveis no ambiente DEV
+SELECT * FROM CLIENTES;
+
+-- Alteração APENAS em DEV para provar o isolamento
+UPDATE CLIENTES SET ESTADO = 'XX' WHERE CLIENTE_ID = 1;
+
+-- Compararação: Em DEV o estado mudou para 'XX', em PROD continua o original
+SELECT NOME, ESTADO FROM TECHSTORE_DEV.VENDAS.CLIENTES WHERE CLIENTE_ID = 1;
+SELECT NOME, ESTADO FROM TECHSTORE_DB.VENDAS.CLIENTES WHERE CLIENTE_ID = 1;
+
+
+
+
+
+
+
+
+
+-- =============================================================
+-- Camada Time Travel Recuperando um DELETE Indevido
+-- =============================================================
+
+-- Voltando para o ambiente de Produção
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+
+-- SIMULAÇÃO DO ERRO: Apagar clientes de SP por engano
+DELETE FROM CLIENTES WHERE ESTADO = 'SP';
+
+-- Verificando a perda: A Ana Silva sumiu!
+SELECT * FROM CLIENTES;
+
+
+-- SOLUÇÃO COM TIME TRAVEL: Consultar e Restaurar
+-- Ver a tabela como ela estava há 2 minutos atrás
+SELECT * FROM CLIENTES AT(OFFSET => -120);
+
+-- Restaurar o registro deletado re-inserindo o dado do passado
+INSERT INTO CLIENTES
+SELECT * FROM CLIENTES AT(OFFSET => -120)
+WHERE ESTADO = 'SP';
+
+-- Validação: A Ana Silva voltou para a tabela
+SELECT * FROM CLIENTES;
+
+
+
+
+-- Voltando para o ambiente de Produção
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+
+-- =============================================================
+-- SIMULAÇÃO DO ERRO 1: Apagar clientes de SP por engano
+-- =============================================================
+DELETE FROM CLIENTES WHERE ESTADO = 'SP';
+
+-- Verificando a perda: A Ana Silva sumiu!
+SELECT * FROM CLIENTES;
+
+
+-- SOLUÇÃO COM TIME TRAVEL: Consultar e Restaurar
+-- Ver a tabela como ela estava há 2 minutos atrás (-120 segundos)
+SELECT * FROM CLIENTES AT(OFFSET => -120);
+
+-- estaurar o registro deletado re-inserindo o dado do passado
+INSERT INTO CLIENTES
+SELECT * FROM CLIENTES AT(OFFSET => -120)
+WHERE ESTADO = 'SP';
+
+-- Validação: A Ana Silva voltou para a tabela!
+SELECT * FROM CLIENTES;
+
+
+
+-- SIMULAÇÃO : Exclusão acidental da tabela inteira
+DROP TABLE PRODUTOS;
+
+-- Tentando consultar a tabela (vai retornar erro informando que ela não existe)
+-- SELECT * FROM PRODUTOS; 
+
+-- =============================================================
+-- SOLUÇÃO COM TIME TRAVEL: Comando UNDROP
+-- =============================================================
+
+-- Restaurar a tabela inteira com seus dados, índices e metadados com 1 comando:
+UNDROP TABLE PRODUTOS;
+
+-- Validação: A tabela e todos os seus produtos voltaram intocados!
+SELECT * FROM PRODUTOS;
+
+

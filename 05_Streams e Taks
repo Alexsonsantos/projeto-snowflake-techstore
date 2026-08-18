@@ -1,0 +1,134 @@
+USE ROLE ACCOUNTADMIN;
+USE WAREHOUSE TECHSTORE_WH;
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- Criaando uma tabela de Destino (Analytics / Data Mart)
+CREATE OR REPLACE TABLE REGISTRO_VENDAS_SUMARIO (
+    CLIENTE_ID INT,
+    TOTAL_GASTO NUMBER(10,2),
+    ULTIMA_ATUALIZACAO TIMESTAMP_NTZ
+);
+
+-- Criar um STREAM na tabela de VENDAS (Tabela Origem)
+-- O Stream captura delta de dados (CDC)
+CREATE OR REPLACE STREAM STRM_VENDAS ON TABLE VENDAS;
+
+-- verifica se o Stream tem algo
+SELECT * FROM STRM_VENDAS;
+
+-- Criar a TASK que roda a cada 1 minuto
+CREATE OR REPLACE TASK TASK_PROCESSA_VENDAS
+    WAREHOUSE = TECHSTORE_WH
+    SCHEDULE = '1 MINUTE'
+    WHEN SYSTEM$STREAM_HAS_DATA('STRM_VENDAS')
+AS
+    MERGE INTO REGISTRO_VENDAS_SUMARIO dest
+    USING (
+        SELECT 
+            CLIENTE_ID, 
+            SUM(VALOR_TOTAL) AS TOTAL_GASTO
+        FROM STRM_VENDAS
+        WHERE METADATA$ACTION = 'INSERT' 
+        GROUP BY CLIENTE_ID
+    ) src
+    ON dest.CLIENTE_ID = src.CLIENTE_ID
+    WHEN MATCHED THEN 
+        UPDATE SET dest.TOTAL_GASTO = dest.TOTAL_GASTO + src.TOTAL_GASTO, 
+                   dest.ULTIMA_ATUALIZACAO = CURRENT_TIMESTAMP()
+    WHEN NOT MATCHED THEN 
+        INSERT (CLIENTE_ID, TOTAL_GASTO, ULTIMA_ATUALIZACAO)
+        VALUES (src.CLIENTE_ID, src.TOTAL_GASTO, CURRENT_TIMESTAMP());
+
+-- Ativando a Task
+ALTER TASK TASK_PROCESSA_VENDAS RESUME;
+
+
+--===============================================================================
+-- Testando a Automação em Tempo Real
+--===============================================================================
+
+-- Inserindo uma nova venda para o Cliente 1
+INSERT INTO VENDAS (CLIENTE_ID, VALOR_TOTAL) VALUES (1, 300.00);
+
+-- Verificando o STREAM imediatamente: O dado novo aparecerá lá com metadados de captura!
+SELECT * FROM STRM_VENDAS;
+
+-- Verificando a tabela de sumário: O dado foi consumido e processado automaticamente!
+SELECT * FROM REGISTRO_VENDAS_SUMARIO;
+
+-- Verifique o STREAM novamente
+-- Assim que o Stream é consumido com sucesso, ele limpa seu buffer até que cheguem novos dados.
+SELECT * FROM STRM_VENDAS;
+
+-- Suspendendo a tasks ao terminar para não consumir créditos à toa
+ALTER TASK TASK_PROCESSA_VENDAS SUSPEND;
+
+
+
+USE ROLE ACCOUNTADMIN;
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- Criar o Pipe apontando para um Stage com os dados
+CREATE OR REPLACE PIPE PIPE_CARGA_VENDEDORES
+    AUTO_INGEST = TRUE 
+AS
+    COPY INTO VENDEDORES
+    FROM @MEU_STAGE_INTERNO/vendedores/
+    FILE_FORMAT = (FORMAT_NAME = 'FF_CSV_PADRAO');
+
+-- Verifica o status do Pipe
+SELECT SYSTEM$PIPE_STATUS('PIPE_CARGA_VENDEDORES');
+
+
+
+
+
+
+
+USE ROLE SYSADMIN;
+USE WAREHOUSE TECHSTORE_WH;
+USE DATABASE TECHSTORE_DB;
+USE SCHEMA VENDAS;
+
+-- Criando o STREAM na tabela VENDAS
+CREATE OR REPLACE STREAM STRM_VENDAS ON TABLE VENDAS;
+
+-- Criando a TASK com disparo condicional 
+CREATE OR REPLACE TASK TASK_PROCESSA_VENDAS
+    WAREHOUSE = TECHSTORE_WH
+    SCHEDULE = '1 MINUTE'
+    WHEN SYSTEM$STREAM_HAS_DATA('STRM_VENDAS')
+AS
+    MERGE INTO REGISTRO_VENDAS_SUMARIO dest
+    USING (
+        SELECT 
+            CLIENTE_ID, 
+            SUM(VALOR_TOTAL) AS TOTAL_GASTO
+        FROM STRM_VENDAS
+        WHERE METADATA$ACTION = 'INSERT'
+        GROUP BY CLIENTE_ID
+    ) src
+    ON dest.CLIENTE_ID = src.CLIENTE_ID
+    WHEN MATCHED THEN 
+        UPDATE SET dest.TOTAL_GASTO = dest.TOTAL_GASTO + src.TOTAL_GASTO, 
+                   dest.ULTIMA_ATUALIZACAO = CURRENT_TIMESTAMP()
+    WHEN NOT MATCHED THEN 
+        INSERT (CLIENTE_ID, TOTAL_GASTO, ULTIMA_ATUALIZACAO)
+        VALUES (src.CLIENTE_ID, src.TOTAL_GASTO, CURRENT_TIMESTAMP());
+
+-- 3. Ativar a Task
+ALTER TASK TASK_PROCESSA_VENDAS RESUME;
+
+
+
+-- Insirindo uma nova venda
+INSERT INTO VENDAS (CLIENTE_ID, VALOR_TOTAL) VALUES (1, 500.00);
+
+SELECT * FROM STRM_VENDAS;
+SELECT * FROM REGISTRO_VENDAS_SUMARIO;
+
+ALTER TASK TASK_PROCESSA_VENDAS SUSPEND;
+
+
