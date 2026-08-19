@@ -65,10 +65,10 @@ CREATE OR REPLACE TABLE ITENS_VENDA (
 -- =============================================================
 
 -- Inserindo Clientes com metadados em formato JSON
-INSERT INTO CLIENTES (NOME, EMAIL, ESTADO, METADADOS) VALUES 
-('Ana Silva', 'ana.silva@email.com', 'SP', '{"canal_origem": "Google", "categoria_fav": "Tech"}'::VARIANT),
-('Carlos Souza', 'carlos.souza@email.com', 'RJ', '{"canal_origem": "Instagram", "categoria_fav": "Games"}'::VARIANT),
-('Mariana Lima', 'mariana.lima@email.com', 'MG', '{"canal_origem": "Indicacao", "categoria_fav": "Audio"}'::VARIANT);
+INSERT INTO CLIENTES (NOME, EMAIL, ESTADO, METADADOS)
+SELECT 'Ana Silva', 'ana.silva@email.com', 'SP', PARSE_JSON('{"canal_origem": "Google", "categoria_fav": "Tech"}') UNION ALL
+SELECT 'Carlos Souza', 'carlos.souza@email.com', 'RJ', PARSE_JSON('{"canal_origem": "Instagram", "categoria_fav": "Games"}') UNION ALL
+SELECT 'Mariana Lima', 'mariana.lima@email.com', 'MG', PARSE_JSON('{"canal_origem": "Indicacao", "categoria_fav": "Audio"}');
 
 -- Inserindo Produtos
 INSERT INTO PRODUTOS (PRODUTO_ID, NOME_PRODUTO, CATEGORIA, PRECO, ESTOQUE) VALUES
